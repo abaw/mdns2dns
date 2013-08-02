@@ -1,9 +1,11 @@
+{-# LANGUAGE DoAndIfThenElse #-}
 import Control.Monad (forever,forM,guard,void)
 import Control.Concurrent (forkIO)
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Char8 as C
 import Data.Binary.Get (getWord32host,runGet)
+import Data.Char (isAscii)
 import Data.Functor ((<$>))
 import Data.Maybe (catMaybes)
 import Debug.Trace (traceShow)
@@ -11,6 +13,7 @@ import Network.DNS
 import Network.Socket hiding (sendTo)
 import Network.Socket.ByteString(sendTo)
 import System.Environment (getArgs)
+import System.Exit (exitFailure)
 
 -- | The port used for MDNS requests/respones
 mdnsPort :: PortNumber
@@ -27,54 +30,63 @@ mdnsAddr = SockAddrInet mdnsPort mdnsIp
 toDomain :: String -> Domain
 toDomain = C.pack
 
--- | Extract domains with given suffixes in the questions of a DNS request
-extractDomainsWithSuffixes :: [Domain]  -- ^ The suffixes of domains we are interested in
-                           -> DNSFormat -- ^ The DNS message
-                           -> [Domain]  -- ^ The domains with suffixes we are interested in
-extractDomainsWithSuffixes suffixes msg =
-    if qOrR (flags (header msg)) == QR_Query
-    then domains
-    else []
+-- | Create a MDNS response
+responseMDNS :: DNSFormat        -- ^ The original MDNS request
+             -> [ResourceRecord] -- ^ The answers to response
+             -> DNSFormat        -- ^ The result MDNS response
+responseMDNS req answers = DNSFormat h [] answers [] []
   where
-    domains = do
-        q <- question msg
-        guard $ qtype q == A
-        guard $ any (`C.isSuffixOf` qname q) suffixes
-        return $ qname q
+    h = DNSHeader { identifier = identifier (header req)
+                  , flags = (flags $ header req) {qOrR = QR_Response}
+                  , qdCount = 0
+                  , anCount = length answers
+                  , nsCount = 0
+                  , arCount = 0
+                  }
 
--- | Query domains with DNS server and response through MDNS
-queryDomains :: Socket    -- ^ The socket used to response MDNS
-             -> Resolver  -- ^ The resolver we could use to lookup domains with
-             -> [Domain]  -- ^ The domains we want to look up
-             -> DNSFormat -- ^ The origial MDNS request
-             -> IO ()
-queryDomains sock resolver domains req = do
-    dnsRsps <- catMaybes <$> forM domains (\name -> lookupRaw resolver name A)
-    let answer' = concat $ map answer dnsRsps
-        flags' = (flags $ header req) { qOrR = QR_Response }
-        header' = (header req) {flags = flags',qdCount = 0,anCount = length answer'}
-        mdnsRsp = req {header = header',question = [],answer = answer'}
-        rspBytes = B.concat $ BL.toChunks $ encode mdnsRsp
-    void $ sendTo sock rspBytes mdnsAddr
+-- | query DNS for a list of qustions
+lookupDNS :: Resolver            -- ^ The resolver to lookup with
+          -> [Question]          -- ^ The list of questions to look up
+          -> IO [ResourceRecord] -- ^ The answers
+lookupDNS resolver questions = concat <$> forM questions lookup'
+  where
+    lookup' :: Question -> IO [ResourceRecord]
+    -- returns [] if no results found
+    lookup' q = maybe [] answer <$> lookupRaw resolver (qname q) (qtype q)
 
 -- | Proxy MDNS queries for domains ending with the given suffixes.
 proxyForSuffixes :: [Domain] -> IO ()
 proxyForSuffixes suffixes = withSocketsDo $ do
     seed <- makeResolvSeed defaultResolvConf
     sock <- socket AF_INET Datagram defaultProtocol
+    -- We should work properly when other MDNS server(e.g. avahi-daemon) is
+    -- running, so we need to set ReuseAddr socket option.
     setSocketOption sock ReuseAddr 1
-    bind sock addr
+    bind sock serverAddr
     forever $ receive sock >>= processMsg sock seed
   where
-    addr = SockAddrInet mdnsPort (fromInteger 0)
-    processMsg sock seed msg = print ("received:" ++ show msg) >> case extractDomainsWithSuffixes suffixes msg of
-        [] -> return ()
-        domains -> void $ forkIO $ withResolver seed $ \resolver ->
-            queryDomains sock resolver domains msg
+    serverAddr = SockAddrInet mdnsPort 0
+    processMsg sock seed msg =  proxyIt
+      where
+        proxyIt
+            | isResponse || null interestedQuestions = return ()
+            | otherwise =  void $ forkIO $ withResolver seed $ \resolver -> do
+                  answers <- lookupDNS resolver interestedQuestions
+                  let rsp = responseMDNS msg answers
+                  void $ sendTo sock (msgToByteString rsp) mdnsAddr
+        interestedQuestions = [ q | q <- question msg
+                                  , qtype q == A
+                                  , any (`C.isSuffixOf` qname q) suffixes]
+        isResponse = qOrR (flags $ header msg) == QR_Response
+        -- encode the response and then convert it to strict ByteString from a
+        -- lazy one.
+        msgToByteString = B.concat . BL.toChunks . encode
 
 main = do
     suffixes <- getArgs
-    proxyForSuffixes $ map (toDomain . fixSuffix) suffixes
+    if all (all isAscii) suffixes
+    then proxyForSuffixes $ map (toDomain . fixSuffix) suffixes
+    else putStrLn "Only supports domain names in ascii!!" >> exitFailure
   where
     -- names in DNS questions should end in "."
     fixSuffix suffix
