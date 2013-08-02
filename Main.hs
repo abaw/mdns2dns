@@ -87,7 +87,7 @@ proxyForSuffixes suffixes = withSocketsDo $ do
     processMsg sock seed msg =  proxyIt
       where
         proxyIt
-            | isResponse || null questionToUs = return ()
+            | notRequest || null questionToUs = return ()
             | otherwise =  do
                   putStrLn $ "will handle:" ++ show questionToUs
                   void $ forkIO $ withResolver seed $ \resolver -> do
@@ -97,7 +97,7 @@ proxyForSuffixes suffixes = withSocketsDo $ do
         questionToUs = [ q | q <- question msg
                                   , qtype q == A
                                   , any (`C.isSuffixOf` qname q) suffixes]
-        isResponse = qOrR (flags $ header msg) == QR_Response
+        notRequest = not $ qOrR (flags $ header msg) == QR_Query
         -- encode the response and then convert it to strict ByteString from a
         -- lazy one.
         msgToByteString = bsFromLazy . encode
