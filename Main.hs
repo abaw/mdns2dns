@@ -10,8 +10,8 @@ import Data.Functor ((<$>))
 import Data.Maybe (catMaybes)
 import Debug.Trace (traceShow)
 import Network.DNS
-import Network.Socket hiding (sendTo)
-import Network.Socket.ByteString(sendTo)
+import Network.Socket hiding (recv,sendTo)
+import Network.Socket.ByteString(recv,sendTo)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
@@ -27,8 +27,21 @@ mdnsIp = runGet getWord32host $ BL.pack [224,0,0,251]
 mdnsAddr :: SockAddr
 mdnsAddr = SockAddrInet mdnsPort mdnsIp
 
+-- | The maximum size of UDP DNS message defined in RFC-1035
+maxDNSMsgSize :: Int
+maxDNSMsgSize = 512
+
+-- | Convert a String with only ascii characters to Domain
 toDomain :: String -> Domain
 toDomain = C.pack
+
+-- | convert strict ByteString to lazy ByteString
+bsFromStrict :: B.ByteString -> BL.ByteString
+bsFromStrict = BL.pack . B.unpack
+
+-- | convert lazy ByteString to strict ByteString
+bsFromLazy :: BL.ByteString -> B.ByteString
+bsFromLazy = B.concat . BL.toChunks
 
 -- | Create a MDNS response
 responseMDNS :: DNSFormat        -- ^ The original MDNS request
@@ -63,24 +76,31 @@ proxyForSuffixes suffixes = withSocketsDo $ do
     -- running, so we need to set ReuseAddr socket option.
     setSocketOption sock ReuseAddr 1
     bind sock serverAddr
-    forever $ receive sock >>= processMsg sock seed
+    forever $ tryReceivingMsg sock seed
   where
     serverAddr = SockAddrInet mdnsPort 0
+    tryReceivingMsg sock seed = do
+        bytes <- recv sock maxDNSMsgSize
+        case decode (bsFromStrict bytes) of
+            Left err -> putStrLn $ "received a invalid message:" ++ err
+            Right msg' -> processMsg sock seed msg'
     processMsg sock seed msg =  proxyIt
       where
         proxyIt
-            | isResponse || null interestedQuestions = return ()
-            | otherwise =  void $ forkIO $ withResolver seed $ \resolver -> do
-                  answers <- lookupDNS resolver interestedQuestions
-                  let rsp = responseMDNS msg answers
-                  void $ sendTo sock (msgToByteString rsp) mdnsAddr
-        interestedQuestions = [ q | q <- question msg
+            | isResponse || null questionToUs = return ()
+            | otherwise =  do
+                  putStrLn $ "will handle:" ++ show questionToUs
+                  void $ forkIO $ withResolver seed $ \resolver -> do
+                      answers <- lookupDNS resolver questionToUs
+                      let rsp = responseMDNS msg answers
+                      void $ sendTo sock (msgToByteString rsp) mdnsAddr
+        questionToUs = [ q | q <- question msg
                                   , qtype q == A
                                   , any (`C.isSuffixOf` qname q) suffixes]
         isResponse = qOrR (flags $ header msg) == QR_Response
         -- encode the response and then convert it to strict ByteString from a
         -- lazy one.
-        msgToByteString = B.concat . BL.toChunks . encode
+        msgToByteString = bsFromLazy . encode
 
 main = do
     suffixes <- getArgs
