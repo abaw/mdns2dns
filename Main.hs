@@ -97,7 +97,7 @@ proxyForSuffixes suffixes = withSocketsDo $ do
         questionToUs = [ q | q <- question msg
                                   , qtype q == A
                                   , any (`C.isSuffixOf` qname q) suffixes]
-        notRequest = not $ qOrR (flags $ header msg) == QR_Query
+        notRequest = qOrR (flags $ header msg) /= QR_Query
         -- encode the response and then convert it to strict ByteString from a
         -- lazy one.
         msgToByteString = bsFromLazy . encode
