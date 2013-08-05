@@ -17,4 +17,4 @@ cabal-version:       >=1.8
 executable mdns2dns
   main-is:             Main.hs
   -- other-modules:       
-  build-depends:       base ==4.5.*,binary,bytestring,dns,network
+  build-depends:       base ==4.5.*,binary,bytestring,dns,network,network-multicast

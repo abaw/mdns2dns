@@ -10,6 +10,7 @@ import Data.Functor ((<$>))
 import Data.Maybe (catMaybes)
 import Debug.Trace (traceShow)
 import Network.DNS
+import Network.Multicast (addMembership)
 import Network.Socket hiding (recv,sendTo)
 import Network.Socket.ByteString(recv,sendTo)
 import System.Environment (getArgs)
@@ -35,11 +36,11 @@ maxDNSMsgSize = 512
 toDomain :: String -> Domain
 toDomain = C.pack
 
--- | convert strict ByteString to lazy ByteString
+-- | Convert strict ByteString to lazy ByteString
 bsFromStrict :: B.ByteString -> BL.ByteString
 bsFromStrict = BL.pack . B.unpack
 
--- | convert lazy ByteString to strict ByteString
+-- | Convert lazy ByteString to strict ByteString
 bsFromLazy :: BL.ByteString -> B.ByteString
 bsFromLazy = B.concat . BL.toChunks
 
@@ -57,7 +58,7 @@ responseMDNS req answers = DNSFormat h [] answers [] []
                   , arCount = 0
                   }
 
--- | query DNS for a list of qustions
+-- | Query DNS for a list of qustions
 lookupDNS :: Resolver            -- ^ The resolver to lookup with
           -> [Question]          -- ^ The list of questions to look up
           -> IO [ResourceRecord] -- ^ The answers
@@ -76,6 +77,8 @@ proxyForSuffixes suffixes = withSocketsDo $ do
     -- running, so we need to set ReuseAddr socket option.
     setSocketOption sock ReuseAddr 1
     bind sock serverAddr
+    mdnsIpStr <- inet_ntoa mdnsIp
+    addMembership sock mdnsIpStr
     forever $ tryReceivingMsg sock seed
   where
     serverAddr = SockAddrInet mdnsPort 0
@@ -95,8 +98,8 @@ proxyForSuffixes suffixes = withSocketsDo $ do
                       let rsp = responseMDNS msg answers
                       void $ sendTo sock (msgToByteString rsp) mdnsAddr
         questionToUs = [ q | q <- question msg
-                                  , qtype q == A
-                                  , any (`C.isSuffixOf` qname q) suffixes]
+                           , qtype q == A
+                           , any (`C.isSuffixOf` qname q) suffixes]
         notRequest = not $ qOrR (flags $ header msg) == QR_Query
         -- encode the response and then convert it to strict ByteString from a
         -- lazy one.
