@@ -7,6 +7,7 @@ import qualified Data.ByteString.Char8 as C
 import Data.Binary.Get (getWord32host,runGet)
 import Data.Char (isAscii)
 import Data.Functor ((<$>))
+import Data.IP (IPv4,toHostAddress)
 import Data.Maybe (catMaybes)
 import Debug.Trace (traceShow)
 import Network.DNS
@@ -21,12 +22,12 @@ mdnsPort :: PortNumber
 mdnsPort = 5353
 
 -- | The multicast IP address used for MDNS responses
-mdnsIp :: HostAddress
-mdnsIp = runGet getWord32host $ BL.pack [224,0,0,251]
+mdnsIp :: IPv4
+mdnsIp = read "224.0.0.251"
 
 -- | The SockAddr used for MDNS response
 mdnsAddr :: SockAddr
-mdnsAddr = SockAddrInet mdnsPort mdnsIp
+mdnsAddr = SockAddrInet mdnsPort (toHostAddress mdnsIp)
 
 -- | The maximum size of UDP DNS message defined in RFC-1035
 maxDNSMsgSize :: Int
@@ -77,8 +78,7 @@ proxyForSuffixes suffixes = withSocketsDo $ do
     -- running, so we need to set ReuseAddr socket option.
     setSocketOption sock ReuseAddr 1
     bind sock serverAddr
-    mdnsIpStr <- inet_ntoa mdnsIp
-    addMembership sock mdnsIpStr
+    addMembership sock $ show mdnsIp
     forever $ tryReceivingMsg sock seed
   where
     serverAddr = SockAddrInet mdnsPort 0
