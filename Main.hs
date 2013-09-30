@@ -49,7 +49,7 @@ bsFromLazy = B.concat . BL.toChunks
 responseMDNS :: DNSFormat        -- ^ The original MDNS request
              -> [ResourceRecord] -- ^ The answers to response
              -> DNSFormat        -- ^ The result MDNS response
-responseMDNS req answers = DNSFormat h [] answers [] []
+responseMDNS req answers = DNSFormat h [] [ a { rrttl = 120 } | a <- answers] [] []
   where
     h = DNSHeader { identifier = identifier (header req)
                   , flags = (flags $ header req) {qOrR = QR_Response}
