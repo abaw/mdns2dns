@@ -1,6 +1,12 @@
 # Introduction
 Host names ending in *.local* are reserved for MDNS. But they are used in some private networks as normal domain names. Some systems have problems resolving such domain names because they only query the names through MDNS. *mdns2dns* is a simple program to act like a proxy between MDNS client and DNS servers. When it receives a MDNS request, it will ask the answer from the DNS server and response to the MDNS request.
 
+# Install
+Please use [stack](https://github.com/commercialhaskell/stack) to build and install the binary. After installing [stack](https://github.com/commercialhaskell/stack), please execute the following commands inside the directory of this project:
+
+    stack setup
+    stack install
+
 
 # Usage
 The usage is really simple. The program accepts a list of domain name suffixes to be handled. For example, if you run *mdns2dns* as:
