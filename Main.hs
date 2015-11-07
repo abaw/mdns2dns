@@ -46,17 +46,13 @@ bsFromLazy :: BL.ByteString -> B.ByteString
 bsFromLazy = B.concat . BL.toChunks
 
 -- | Create a MDNS response
-responseMDNS :: DNSFormat        -- ^ The original MDNS request
+responseMDNS :: DNSMessage        -- ^ The original MDNS request
              -> [ResourceRecord] -- ^ The answers to response
-             -> DNSFormat        -- ^ The result MDNS response
-responseMDNS req answers = DNSFormat h [] [ a { rrttl = 120 } | a <- answers] [] []
+             -> DNSMessage        -- ^ The result MDNS response
+responseMDNS req answers = DNSMessage h [] [ a { rrttl = 120 } | a <- answers] [] []
   where
     h = DNSHeader { identifier = identifier (header req)
                   , flags = (flags $ header req) {qOrR = QR_Response}
-                  , qdCount = 0
-                  , anCount = length answers
-                  , nsCount = 0
-                  , arCount = 0
                   }
 
 -- | Query DNS for a list of qustions
@@ -67,7 +63,7 @@ lookupDNS resolver questions = concat <$> forM questions lookup'
   where
     lookup' :: Question -> IO [ResourceRecord]
     -- returns [] if no results found
-    lookup' q = maybe [] answer <$> lookupRaw resolver (qname q) (qtype q)
+    lookup' q = either (const []) answer <$> lookupRaw resolver (qname q) (qtype q)
 
 -- | Proxy MDNS queries for domains ending with the given suffixes.
 proxyForSuffixes :: [Domain] -> IO ()
@@ -78,7 +74,7 @@ proxyForSuffixes suffixes = withSocketsDo $ do
     -- running, so we need to set ReuseAddr socket option.
     setSocketOption sock ReuseAddr 1
     bind sock serverAddr
-    addMembership sock $ show mdnsIp
+    addMembership sock (show mdnsIp) Nothing
     forever $ tryReceivingMsg sock seed
   where
     serverAddr = SockAddrInet mdnsPort 0
